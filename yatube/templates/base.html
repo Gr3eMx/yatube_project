@@ -1,9 +1,10 @@
 <!-- templates/base.html -->
 <!DOCTYPE html>
-
+{% load static %}
+{% include 'includes/header.html' %}
 {% block title %}
 {% endblock %}
-{% include 'includes/header.html' %}
 {% block content %}
 {% endblock %}
 {% include 'includes/footer.html' %}
+
