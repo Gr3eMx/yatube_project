@@ -11,7 +11,6 @@ def index(request):
     paginator = Paginator(post_list, 10)
     page_number = request.GET.get('page')
     page_obj = paginator.get_page(page_number)
-    # В словаре context отправляем информацию в шаблон
     context = {
         'page_obj': page_obj,
     }
