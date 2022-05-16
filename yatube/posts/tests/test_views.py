@@ -1,12 +1,17 @@
+import shutil
+import tempfile
 from django.utils import timezone
+from django.conf import settings
 from datetime import timedelta
 from django.contrib.auth import get_user_model
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django import forms
 from posts.models import Post, Group
+from django.core.files.uploadedfile import SimpleUploadedFile
 
 User = get_user_model()
+TEMP_MEDIA_ROOT = tempfile.mkdtemp(dir=settings.BASE_DIR)
 
 
 class PostVIEWSTests(TestCase):
@@ -192,13 +197,15 @@ class PostVIEWSTests(TestCase):
     def test_first_page_contains_five_records_group_list_2(self):
         """Проверка паджинатора для странцы с сортировкой по группе."""
         response = self.authorized_client_author.get(reverse('posts:group_posts', kwargs={
-                    'slug': PostVIEWSTests.group_1.slug}))
+            'slug': PostVIEWSTests.group_1.slug}))
         self.assertEqual(len(response.context['page_obj']), 6)
+
     def test_first_page_contains_five_records_profile(self):
         """Проверка паджинатора для страницы профиля."""
         response = self.authorized_client_author.get(reverse('posts:profile', kwargs={
-                    'username': PostVIEWSTests.user.username}))
+            'username': PostVIEWSTests.user.username}))
         self.assertEqual(len(response.context['page_obj']), 10)
+
     def test_group_in_all_list(self):
         test_post = 1
         response_index = self.authorized_client_author.get(
@@ -215,3 +222,68 @@ class PostVIEWSTests(TestCase):
         self.context_test(test_post, response_group)
         self.context_test(test_post, response_profile)
 
+
+@override_settings(MEDIA_ROOT=TEMP_MEDIA_ROOT)
+class ImagePostViewsTests(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.user = User.objects.create_user(username='auth')
+        cls.group = Group.objects.create(
+            title='Первая группа',
+            slug='test_slug',
+            description='Тестовое описание первой группы',
+        )
+        small_gif = (
+            b'\x47\x49\x46\x38\x39\x61\x02\x00'
+            b'\x01\x00\x80\x00\x00\x00\x00\x00'
+            b'\xFF\xFF\xFF\x21\xF9\x04\x00\x00'
+            b'\x00\x00\x00\x2C\x00\x00\x00\x00'
+            b'\x02\x00\x01\x00\x00\x02\x02\x0C'
+            b'\x0A\x00\x3B'
+        )
+        uploaded = SimpleUploadedFile(
+            name='small.gif',
+            content=small_gif,
+            content_type='image/gif'
+        )
+        cls.post = Post.objects.create(
+            author=cls.user,
+            text='Тестовый пост',
+            group=cls.group,
+            image=uploaded
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEMP_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        self.authorized_client_author = Client()
+        self.authorized_client_author.force_login(ImagePostViewsTests.user)
+
+    def test_image_in_post(self):
+        """Проверка поста на наличие картинки на страницах."""
+        templates_pages_names = {
+            'posts/index.html': reverse('posts:index'),
+            'posts/group_list.html': (
+                reverse('posts:group_posts', kwargs={
+                    'slug': ImagePostViewsTests.group.slug})
+            ),
+            'posts/profile.html': (
+                reverse('posts:profile', kwargs={
+                    'username': ImagePostViewsTests.user.username})
+            ),
+
+        }
+        post_image = ImagePostViewsTests.post
+        for template, reverse_name in templates_pages_names.items():
+            with self.subTest(reverse_name=reverse_name):
+                response = self.authorized_client_author.get(reverse_name)
+                self.assertEqual(response.context['page_obj'][0].image, post_image.image)
+        response_post_detail = self.authorized_client_author.get(
+            reverse('posts:post_detail', kwargs={
+                'post_id': ImagePostViewsTests.post.id
+            }))
+        self.assertEqual(response_post_detail.context['post'].image,post_image.image)

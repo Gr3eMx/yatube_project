@@ -1,5 +1,5 @@
-<!DOCTYPE html> <!-- Используется html 5 версии -->
 {% extends 'base.html' %}
+{% load thumbnail %}
 {% block title %}
 Последние обновления на сайте
 {% endblock %}
@@ -15,6 +15,9 @@
       Дата публикации: {{ post.pub_date|date:"d E Y" }}
     </li>
   </ul>
+{% thumbnail post.image "960x339" crop="center" upscale=True as im %}
+<img class="card-img my-2" src="{{ im.url }}">
+{% endthumbnail %}
   <p>{{ post.text }}</p>
   {% if post.group %}
   <a href="{% url 'posts:group_posts' post.group.slug %}">Все записи группы</a>
