@@ -7,8 +7,9 @@ from django.contrib.auth import get_user_model
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 from django import forms
-from posts.models import Post, Group
+from posts.models import Post, Group, Comment, Follow
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.cache import cache
 
 User = get_user_model()
 TEMP_MEDIA_ROOT = tempfile.mkdtemp(dir=settings.BASE_DIR)
@@ -53,7 +54,6 @@ class PostVIEWSTests(TestCase):
     def test_pages_uses_correct_template(self):
         """URL-адрес использует соответствующий шаблон."""
         templates_pages_names = {
-            'posts/index.html': reverse('posts:index'),
             'posts/group_list.html': (
                 reverse('posts:group_posts', kwargs={
                     'slug': PostVIEWSTests.group_1.slug})
@@ -87,14 +87,6 @@ class PostVIEWSTests(TestCase):
         self.assertEqual(post_text, post_result.text)
         self.assertEqual(str(post_group), str(post_result.group))
         self.assertEqual(post_id, post_result.id)
-
-    def test_index_page_show_correct_context(self):
-        """Шаблон index сформирован с правильным контекстом."""
-        response = self.authorized_client_author.get(reverse('posts:index'))
-        first_obj_in_page = 0
-        last_obj_in_page = 9
-        self.context_test(first_obj_in_page, response)
-        self.context_test(last_obj_in_page, response)
 
     def test_group_page_show_correct_context(self):
         """Шаблон group_list сформирован с правильным контекстом.
@@ -166,9 +158,6 @@ class PostVIEWSTests(TestCase):
     def test_post_create_show_correct_in_3_page(self):
         """Проверка появления поста №1 на главной странице,
         странице группы2 и в профиле пользователя"""
-        response_index = self.authorized_client_author.get(
-            reverse('posts:index')
-        )
         response_group = self.authorized_client_author.get(
             reverse('posts:group_posts', kwargs={
                 'slug': f'{PostVIEWSTests.group_2.slug}'
@@ -180,19 +169,8 @@ class PostVIEWSTests(TestCase):
             })
         )
         first_obj_in_page = 0
-        self.context_test(first_obj_in_page, response_index)
         self.context_test(first_obj_in_page, response_group)
         self.context_test(first_obj_in_page, response_profile)
-
-    def test_first_page_contains_ten_records(self):
-        """Проверка паджинатора для главной страницы из 10 постов."""
-        response = self.authorized_client_author.get(reverse('posts:index'))
-        self.assertEqual(len(response.context['page_obj']), 10)
-
-    def test_second_page_contains_three_records(self):
-        """Проверка паджинатора для главной(второй) страницы из 2 постов."""
-        response = self.authorized_client_author.get(reverse('posts:index') + '?page=2')
-        self.assertEqual(len(response.context['page_obj']), 2)
 
     def test_first_page_contains_five_records_group_list_2(self):
         """Проверка паджинатора для странцы с сортировкой по группе."""
@@ -208,8 +186,6 @@ class PostVIEWSTests(TestCase):
 
     def test_group_in_all_list(self):
         test_post = 1
-        response_index = self.authorized_client_author.get(
-            reverse('posts:index'))
         response_group = self.authorized_client_author.get(
             reverse('posts:group_posts', kwargs={
                 'slug': PostVIEWSTests.group_2.slug
@@ -218,7 +194,6 @@ class PostVIEWSTests(TestCase):
             reverse('posts:profile', kwargs={
                 'username': PostVIEWSTests.user.username
             }))
-        self.context_test(test_post, response_index)
         self.context_test(test_post, response_group)
         self.context_test(test_post, response_profile)
 
@@ -266,7 +241,6 @@ class ImagePostViewsTests(TestCase):
     def test_image_in_post(self):
         """Проверка поста на наличие картинки на страницах."""
         templates_pages_names = {
-            'posts/index.html': reverse('posts:index'),
             'posts/group_list.html': (
                 reverse('posts:group_posts', kwargs={
                     'slug': ImagePostViewsTests.group.slug})
@@ -286,4 +260,121 @@ class ImagePostViewsTests(TestCase):
             reverse('posts:post_detail', kwargs={
                 'post_id': ImagePostViewsTests.post.id
             }))
-        self.assertEqual(response_post_detail.context['post'].image,post_image.image)
+        self.assertEqual(response_post_detail.context['post'].image, post_image.image)
+
+
+class CommentPostViewsTest(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.user = User.objects.create_user(username='auth')
+        cls.group = Group.objects.create(
+            title='Первая группа',
+            slug='test_slug',
+            description='Тестовое описание первой группы',
+        )
+        cls.post = Post.objects.create(
+            author=cls.user,
+            text='Тестовый пост',
+            group=cls.group,
+        )
+        cls.comment = Comment.objects.create(
+            post=cls.post,
+            author=cls.user,
+            text='Тестовый комментарий'
+        )
+
+    def setUp(self):
+        self.authorized_client = Client()
+        self.authorized_client.force_login(CommentPostViewsTest.user)
+
+    def test_comments_in_post(self):
+        """Проверка наличеи комментайрия на посте."""
+        response = self.authorized_client.get(
+            f'/posts/{CommentPostViewsTest.post.id}/')
+        test_comment = response.context['comments'][0].text
+        result_comment = CommentPostViewsTest.comment.text
+        self.assertEqual(result_comment, test_comment)
+
+
+class CacheIndexTests(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.user = User.objects.create_user(username='auth')
+        cls.post = Post.objects.create(
+            author=cls.user,
+            text='Тестовый пост',
+        )
+        cls.comment = Comment.objects.create(
+            author=cls.user,
+            post=cls.post,
+            text='Тестовый комментарий'
+        )
+
+    def setUp(self):
+        self.guest_client = Client()
+
+    def test_comments_in_post(self):
+        """Проверка наличие комментайрия на посте."""
+        response = self.guest_client.get(reverse('posts:index'))
+        post1 = response.content
+        Post.objects.all().delete()
+        response = self.guest_client.get(reverse('posts:index'))
+        post2 = response.content
+        self.assertIn(post1, post2)
+        cache.clear()
+        response = self.guest_client.get(reverse('posts:index'))
+        post3 = response.content
+        self.assertNotIn(post2, post3)
+
+
+class FollowUserTests(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.user1 = User.objects.create_user(username='auth')
+        cls.user2 = User.objects.create_user(username='auth2')
+        cls.user3 = User.objects.create_user(username='auth3')
+        cls.post1 = Post.objects.create(
+            author=cls.user2,
+            text='Тестовый пост автора 2',
+        )
+        cls.post2 = Post.objects.create(
+            author=cls.user3,
+            text='Тестовый пост автора 3',
+        )
+        cls.follow = Follow.objects.create(
+            user=cls.user1,
+            author=cls.user2
+        )
+
+    def setUp(self):
+        self.authorized_client = Client()
+        self.authorized_client.force_login(FollowUserTests.user1)
+        self.authorized_client_two = Client()
+        self.authorized_client_two.force_login(FollowUserTests.user3)
+
+    def test_follow_in_user(self):
+        """Проверка работы подпсики на юзера."""
+        count_followers = Follow.objects.count()
+        self.authorized_client.get(
+            (f'/profile/{FollowUserTests.user3.username}/follow/'))
+        self.assertEqual(count_followers + 1, Follow.objects.count())
+
+    def test_unfollow_in_user(self):
+        """Проверка работы отписки от юзера."""
+        count_followers = Follow.objects.count()
+        self.authorized_client.get(
+            f'/profile/{FollowUserTests.user2.username}/unfollow/'
+        )
+        self.assertEqual(count_followers - 1, Follow.objects.count())
+
+    def test_new_post_in_follower_page(self):
+        """Проверка работы появление постов от подписки."""
+        response_one = self.authorized_client.get('/follow/')
+        text_user2 = response_one.context['page_obj'][0].text
+        self.assertEqual(text_user2, FollowUserTests.post1.text)
+        response_two = self.authorized_client_two.get('/follow/')
+        text_user3 = response_two.context['page_obj']
+        self.assertNotEqual(text_user3, FollowUserTests.post2.text)

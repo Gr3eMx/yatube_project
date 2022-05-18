@@ -3,7 +3,6 @@ from django.test import TestCase
 
 from posts.models import Group, Post
 
-
 User = get_user_model()
 
 
@@ -22,7 +21,6 @@ class PostModelTest(TestCase):
             text='Тестовая пост',
         )
 
-
     def test_models_have_correct_object_names(self):
         """Проверяем, что у моделей корректно работает __str__."""
         group = PostModelTest.group
@@ -31,5 +29,3 @@ class PostModelTest(TestCase):
         expected_object_name_post = post.text
         self.assertEqual(expected_object_name_post, str(post))
         self.assertEqual(expected_object_name_group, str(group))
-
-

@@ -58,3 +58,9 @@ class PostURLTests(TestCase):
         """Страница не существует"""
         response = self.authorized_client.get('/unexisting_page/')
         self.assertEqual(response.status_code, HTTPStatus.NOT_FOUND)
+
+    def test_comments_post(self):
+        """Неавторизованный пользователь не может комментировать."""
+        post_id = PostURLTests.post.id
+        response = self.guest_client.get(f'/posts/{post_id}/comment/')
+        self.assertRedirects(response, f'/auth/login/?next=/posts/{post_id}/comment/')
